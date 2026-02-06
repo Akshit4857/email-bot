@@ -187,4 +187,8 @@ uploaded_excel = col1.file_uploader("1. Excel File", type=["xlsx"])
 uploaded_zip = col2.file_uploader("2. Docs/Emails Zip", type=["zip"])
 
 if st.button("🚀 Start Extraction") and uploaded_excel and uploaded_zip:
-    with st.spinner
+    with st.spinner("Analyzing email trails..."):
+        result = run_automation(uploaded_excel, uploaded_zip)
+        if result:
+            st.success("Extraction Complete!")
+            st.download_button("📥 Download Final Excel", result, "Updated_Tracker.xlsx")
