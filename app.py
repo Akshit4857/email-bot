@@ -13,68 +13,123 @@ from email.parser import BytesParser
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 
-# --- PAGE SETUP ---
-st.set_page_config(page_title="Auto-Detect Bot", layout="wide")
-st.title("⚡ Dynamic Excel Auto-Filler")
-st.markdown("Bas Excel aur Files daalo. Script columns padh kar khud data dhoond legi.")
+# ==========================================
+# 🧠 SENIOR DEV INTELLIGENCE: CONCEPT MAPPING
+# ==========================================
+# Yahan hum Script ko "Samajh" (Context) de rahe hain.
+# LEFT: Excel Column Name
+# RIGHT: List of keywords/phrases jo email mein ho sakte hain
 
-# --- SMART PATTERN GENERATOR ---
-def generate_smart_regex(header_name):
-    """
-    Excel header se Regex banata hai.
-    Example: "Invoice Date" -> r"Invoice[\s_\-]*Date\s*[:\-\=]\s*(.*)"
-    Ye spaces, underscore, aur colon/hyphen sab handle karega.
-    """
-    # Special characters hatake safe string banao
-    clean_header = re.escape(header_name)
-    
-    # Space ko flexible banao (Space ya Underscore chalega)
-    flexible_header = clean_header.replace(r"\ ", r"[\s_\-]*")
-    
-    # Final Pattern: Header + Separator (: or - or =) + Value
-    # Group 1 mein value capture hogi
-    return rf"{flexible_header}\s*[:\-\=]\s*(.*)"
+SMART_MAPPINGS = {
+    "UAT signoff by": [
+        "tested by", "checked by", "validated by", "approved by", 
+        "signoff from", "confirmed by", "regards", "thanks"
+    ],
+    "UAT signoff on": [
+        "date", "dated", "on", "completed on", "done on", "timestamp"
+    ],
+    "Change description": [
+        "regarding", "change for", "deployment of", "issue with", 
+        "summary", "requirement"
+    ],
+    "Downtime Approval": [
+        "downtime approved", "window provided", "maintenance window", 
+        "shutdown allowed", "service disruption"
+    ],
+    "Implementation team approval by": [
+        "implementation approved", "deploy it", "proceed with", 
+        "good to go", "go ahead"
+    ]
+}
 
-# --- READERS (Format Handlers) ---
-def get_pdf_text(path):
-    try:
-        reader = PdfReader(path)
-        return "".join([p.extract_text() or "" for p in reader.pages])
-    except: return ""
+# Agar data mil jaye, to kya hum poori line utha lein? (Evidence ke liye better hai)
+CAPTURE_WHOLE_LINE = True 
 
-def get_word_text(path):
-    try:
-        return "\n".join([p.text for p in docx.Document(path).paragraphs])
-    except: return ""
-
-def get_msg_text(path):
-    try:
-        msg = extract_msg.Message(path)
-        return f"{msg.subject}\n{msg.body}"
-    except: return ""
-
-def get_eml_text(path):
-    try:
-        with open(path, 'rb') as f:
-            msg = BytesParser(policy=policy.default).parse(f)
-            return f"{msg['subject']}\n{msg.get_body(preferencelist=('plain')).get_content()}"
-    except: return ""
-
-def extract_text_smart(file_path):
+# ==========================================
+# FILE READERS (STANDARD)
+# ==========================================
+def get_file_text(file_path):
+    """Detects file type and extracts clean text line-by-line."""
+    text = ""
     ext = file_path.lower()
-    if ext.endswith('.pdf'): return get_pdf_text(file_path)
-    elif ext.endswith('.docx'): return get_word_text(file_path)
-    elif ext.endswith('.msg'): return get_msg_text(file_path)
-    elif ext.endswith('.eml'): return get_eml_text(file_path)
+    
+    try:
+        if ext.endswith('.pdf'):
+            reader = PdfReader(file_path)
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+        
+        elif ext.endswith('.docx'):
+            doc = docx.Document(file_path)
+            text = "\n".join([p.text for p in doc.paragraphs])
+            
+        elif ext.endswith('.msg'):
+            msg = extract_msg.Message(file_path)
+            # Subject is often critical for context
+            text = f"Subject: {msg.subject}\n{msg.body}"
+            
+        elif ext.endswith('.eml'):
+            with open(file_path, 'rb') as f:
+                msg = BytesParser(policy=policy.default).parse(f)
+                text = f"Subject: {msg['subject']}\n{msg.get_body(preferencelist=('plain')).get_content()}"
+    except:
+        return ""
+    
+    return text
+
+# ==========================================
+# 🕵️ LOGIC: CONTEXTUAL FINDER
+# ==========================================
+def find_answer_in_context(column_name, full_text):
+    """
+    Excel Header ke keywords ko Email Text mein dhoondta hai.
+    Regex nahi, ye 'Meaning' dhoond raha hai.
+    """
+    if not full_text: return None
+    
+    # Text ko lines mein todo taaki hum specific line pakad sakein
+    lines = full_text.split('\n')
+    
+    # Check agar column hamari mapping dictionary mein hai
+    # Agar nahi hai, to Column Name ko hi keyword maan lo
+    keywords = SMART_MAPPINGS.get(column_name, [column_name])
+    
+    best_match = None
+    
+    for line in lines:
+        line_clean = line.strip()
+        if not line_clean: continue
+        
+        # Har keyword check karo
+        for keyword in keywords:
+            # Case Insensitive Search
+            if keyword.lower() in line_clean.lower():
+                
+                # Agar keyword mil gaya, to us line ka RELEVANT hissa nikalo
+                
+                # Logic 1: Agar line keyword se start hoti hai (e.g., "Approved by: Rahul")
+                # To colon (:) ya hyphen (-) ke baad ka text uthao
+                if ":" in line_clean:
+                    parts = line_clean.split(":", 1)
+                    if keyword.lower() in parts[0].lower(): # Keyword left side pe hai
+                        return parts[1].strip()
+                
+                # Logic 2: Contextual Inference (Senior Logic)
+                # Agar likha hai "Please proceed with deployment - Rahul"
+                # Aur keyword "proceed" hai, to poori line hi answer hai.
+                return line_clean # Poori line return kardo safe side ke liye
+                
     return None
 
-# --- MAIN LOGIC ---
-def run_dynamic_automation(excel_file, zip_file, id_col, target_cols):
-    # 1. Temp Folder
-    temp_dir = "temp_dynamic_docs"
+# ==========================================
+# MAIN EXECUTION
+# ==========================================
+def run_senior_audit(excel_file, zip_file, id_col):
+    # 1. Setup
+    temp_dir = "temp_audit_ai"
     if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
     os.makedirs(temp_dir)
-
+    
     with zipfile.ZipFile(zip_file, 'r') as z:
         z.extractall(temp_dir)
 
@@ -83,7 +138,7 @@ def run_dynamic_automation(excel_file, zip_file, id_col, target_cols):
         for f in files:
             all_files.append(os.path.join(root, f))
 
-    # 2. Excel Load
+    # 2. Excel Setup
     df = pd.read_excel(excel_file)
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -92,111 +147,91 @@ def run_dynamic_automation(excel_file, zip_file, id_col, target_cols):
     
     wb = load_workbook(output)
     ws = wb.active
-    yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
-    no_fill = PatternFill(fill_type=None)
-
-    # Headers Map
+    
     headers = [str(c.value).strip() for c in ws[1]]
     
-    # ID Column Index
-    try:
-        id_idx = headers.index(id_col)
-    except ValueError:
-        st.error(f"ID Column '{id_col}' Excel mein nahi mila!")
+    # Styles
+    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+
+    if id_col not in headers:
         return None
 
     # 3. Processing
     bar = st.progress(0)
-    status = st.empty()
-
+    logs = st.empty()
+    
     for i, row in df.iterrows():
         bar.progress((i + 1) / len(df))
         
-        # Row ID
-        search_key = str(row.get(id_col, "")).strip().lower()
-        if not search_key or search_key == "nan": continue
-
-        status.text(f"Scanning for: {search_key}...")
-
-        # Find File
+        row_id = str(row.get(id_col, "")).strip().lower()
+        if not row_id or row_id == "nan": continue
+        
+        # Find File (Fuzzy Match ID in Filename)
         file_text = None
-        for f_path in all_files:
-            if search_key in os.path.basename(f_path).lower():
-                file_text = extract_text_smart(f_path)
+        for f in all_files:
+            if row_id in os.path.basename(f).lower():
+                file_text = get_file_text(f)
                 break
         
-        # Fill Target Columns
+        # Row Processing
+        excel_row = i + 2
+        
         if file_text:
-            for col_name in target_cols:
-                if col_name in headers:
-                    col_idx = headers.index(col_name) + 1
-                    cell = ws.cell(row=i+2, column=col_idx)
-                    
-                    # --- DYNAMIC REGEX MAGIC HERE ---
-                    # Column name se pattern banao
-                    dynamic_pattern = generate_smart_regex(col_name)
-                    
-                    # Search
-                    # re.IGNORECASE se "po number", "PO NUMBER" sab match hoga
-                    match = re.search(dynamic_pattern, file_text, re.IGNORECASE)
-                    
-                    if match:
-                        # Value mil gayi -> Clean & Fill
-                        # .split('\n')[0] isliye taaki sirf pehli line uthaye (agar multiline ho to)
-                        value = match.group(1).strip().split('\n')[0]
-                        cell.value = value
-                        cell.fill = no_fill
-                    else:
-                        # File mili par ye wala column ka data nahi mila -> Yellow
-                        if not cell.value: # Agar pehle se bhara hai to mat chedo
-                            cell.fill = yellow
+            # Har column ke liye scan karo
+            for col_idx, col_name in enumerate(headers):
+                if col_name == id_col: continue # ID ko skip karo
+                
+                cell = ws.cell(row=excel_row, column=col_idx+1)
+                
+                # Agar cell pehle se bhara hai to chhod do
+                if cell.value: continue
+                
+                # --- THE BRAIN ---
+                found_value = find_answer_in_context(col_name, file_text)
+                
+                if found_value:
+                    # Value mil gayi!
+                    # Thoda sa safai (Cleaning)
+                    clean_val = found_value.replace("\t", " ").strip()
+                    cell.value = clean_val
+                    cell.fill = green_fill
+                else:
+                    # File mili par data samajh nahi aaya -> Yellow
+                    # Isse aap manually check kar paoge
+                    cell.fill = yellow_fill
         else:
-            # File hi nahi mili -> Selected columns yellow kardo
-            for col_name in target_cols:
-                if col_name in headers:
-                    col_idx = headers.index(col_name) + 1
-                    ws.cell(row=i+2, column=col_idx).fill = yellow
+            # File hi nahi mili -> Poori row Yellow
+            for c in range(1, len(headers) + 1):
+                ws.cell(row=excel_row, column=c).fill = yellow_fill
 
-    # Cleanup
+    # Finalize
     shutil.rmtree(temp_dir)
-    final_out = BytesIO()
-    wb.save(final_out)
-    final_out.seek(0)
-    return final_out
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out
 
-# --- UI INTERFACE ---
-col1, col2 = st.columns(2)
-f_excel = col1.file_uploader("1. Excel Upload", type=["xlsx"])
-f_zip = col2.file_uploader("2. Zip Upload", type=["zip"])
+# ==========================================
+# UI LAYOUT
+# ==========================================
+st.title("🧠 Context-Aware Audit Bot")
+st.markdown("""
+Ye bot **'Keywords'** aur **'Context'** padhta hai, sirf labels nahi.
+Agar Excel mein **'Approver'** manga hai, ye email mein **'Regards'** ya **'Thanks'** dhoond lega.
+""")
 
-if f_excel and f_zip:
-    # --- STEP 1: READ HEADERS ---
-    df_preview = pd.read_excel(f_excel)
-    all_columns = df_preview.columns.tolist()
-    
-    st.write("---")
-    st.subheader("🛠️ Auto-Configuration")
-    
-    c1, c2 = st.columns(2)
-    # User se pucho ID column kaunsa hai
-    selected_id = c1.selectbox("Wo column chuno jisse file match hogi (Unique ID):", all_columns, index=0)
-    
-    # User se pucho kaunse columns AUTOMATICALLY bharne hain
-    # ID column ko by default hata diya list se
-    default_targets = [c for c in all_columns if c != selected_id]
-    selected_targets = c2.multiselect("Kaunse Columns automatic bharne hain?", all_columns, default=default_targets)
+c1, c2 = st.columns(2)
+up_xl = c1.file_uploader("Upload Excel", type=["xlsx"])
+up_zip = c2.file_uploader("Upload Emails Zip", type=["zip"])
 
-    if st.button("🚀 Start Magic"):
-        if not selected_targets:
-            st.error("Kam se kam ek column to select karo bharne ke liye!")
-        else:
-            with st.spinner("Bot Excel ke columns padh raha hai aur data dhoond raha hai..."):
-                # File pointer reset for processing
-                f_excel.seek(0)
-                f_zip.seek(0)
-                
-                result = run_dynamic_automation(f_excel, f_zip, selected_id, selected_targets)
-                
-                if result:
-                    st.success("Done! ✅")
-                    st.download_button("📥 Download Result", result, "Auto_Filled.xlsx")
+if up_xl and up_zip:
+    df_p = pd.read_excel(up_xl)
+    id_s = st.selectbox("Unique ID Column select karein:", df_p.columns)
+    
+    if st.button("🧠 Start Smart Analysis"):
+        with st.spinner("Reading emails and understanding context..."):
+            res = run_senior_audit(up_xl, up_zip, id_s)
+            if res:
+                st.success("Analysis Complete!")
+                st.download_button("📥 Download Smart Filled Excel", res, "Smart_Audit_Output.xlsx")
